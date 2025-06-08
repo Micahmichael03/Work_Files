@@ -1,0 +1,12 @@
+flask
+werkzeug
+opencv-python
+numpy
+Pillow
+ultralytics
+supervision
+requests
+streamlit
+face-recognition
+qrcode
+python-dotenv 

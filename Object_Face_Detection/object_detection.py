@@ -9,7 +9,7 @@ import webbrowser
 import os
 import uuid
 from datetime import datetime
-import pyodbc
+import pyodbc 
 
 from common_functions import detect_a4_paper, get_cost_estimate
 
