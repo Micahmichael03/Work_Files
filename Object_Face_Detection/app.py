@@ -203,6 +203,40 @@ def detect_objects(image):
     # If no detections or no filtered detections, return original image
     return image, {}
 
+def process_frame(frame):
+    if model is None:
+        return frame, []
+    
+    # Convert frame to RGB
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # Run YOLOv8 inference
+    results = model(frame_rgb)
+    
+    # Get detections if any exist  LOOK HERE
+    if len(results[0].boxes) > 0:
+        detections = sv.Detections(
+            xyxy=results[0].boxes.xyxy.cpu().numpy(),
+            confidence=results[0].boxes.conf.cpu().numpy(),
+            class_id=results[0].boxes.cls.cpu().numpy().astype(int)
+        )
+        
+        # Annotate frame
+        labels = [
+            f"{model.model.names[class_id]} {confidence:0.2f}"
+            for _, confidence, class_id in zip(detections.xyxy, detections.confidence, detections.class_id)
+        ]
+        
+        annotated_frame = box_annotator.annotate(
+            scene=frame_rgb.copy(),
+            detections=detections,
+            labels=labels
+        )
+        
+        return annotated_frame, detections
+    
+    return frame_rgb, []
+
 def run_live_camera_detection():
     """Run live camera detection with YOLOv8"""
     st.write("Live Camera Detection - Press 'Stop' to end")
@@ -592,7 +626,7 @@ if st.button("🎥 Start Live Camera", key="live_camera"):
 
 st.markdown("---")
 
-# Image upload option
+# Image upload option (unchanged) LOOK HERE
 st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📤 Upload Image</h2>", unsafe_allow_html=True)
 st.markdown("""
     <div class='upload-section'>
@@ -604,86 +638,109 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-camera_input = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
-if camera_input:
+if uploaded_file is not None:
     st.markdown("<div class='detection-results'>", unsafe_allow_html=True)
-    image = Image.open(camera_input)
+    
+    # Read image
+    image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Image", use_container_width=True)
-
-    with st.spinner("🔍 Detecting objects and estimating costs..."):
-        # Run object detection
-        annotated_image, detected_items = detect_objects(image)
+    
+    # Process button
+    if st.button("🔍 Analyze Uploaded Image"):
+        # Convert to OpenCV format
+        image_np = np.array(image.convert('RGB'))
+        image_cv = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         
-        # Show detection results
-        st.image(annotated_image, caption="Detected Objects", use_container_width=True)
-        
-        if detected_items:
-            st.markdown("""
-                <div class='success-box'>
-                    <h3 style='margin: 0; color: #1E3A8A;'>✅ Objects Detected</h3>
-                    <p style='margin: 0.5rem 0 0 0;'>{}</p>
-                </div>
-            """.format(', '.join([f'<strong>{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
+        with st.spinner("Processing image..."):
+            # Process image
+            annotated_image, detections = process_frame(image_cv)
             
-            # Find matching items in our database
-            estimates = []
-            total_cost = 0
+            # Show detection results
+            st.image(annotated_image, caption="Detected Objects", use_container_width=True)
             
-            for item_name, quantity in detected_items.items():
-                # Find the item in our database (case insensitive)
-                matching_items = [item for item in construction_items 
-                                if item["object"].lower() == item_name.lower()]
+            # Get detected items
+            detected_items = {}
+            if len(detections) > 0:
+                for i in range(len(detections)):
+                    class_id = detections.class_id[i]
+                    class_name = model.model.names[class_id]
+                    detected_items[class_name] = detected_items.get(class_name, 0) + 1
                 
-                if matching_items:
-                    item = matching_items[0]
-                    cost = item['unit_cost'] * quantity
-                    total_cost += cost
-                    estimates.append({
-                        "object": item['object'], 
-                        "qty": quantity, 
-                        "cost": cost, 
-                        "link": item['supplier']
-                    })
-            
-            if estimates:
-                st.markdown("<h3 style='text-align: center; margin-top: 2rem; color: #1E3A8A;'>📊 Cost Estimation Results</h3>", unsafe_allow_html=True)
-                
-                for e in estimates:
-                    st.markdown(f"""
-                        <div class='item-box'>
-                            <div style='display: flex; justify-content: space-between; align-items: center;'>
-                                <div>
-                                    <span class='item-title'>{e['object']}</span><br>
-                                    <span class='item-details'>Quantity: {e['qty']} | Cost: ${e['cost']}</span>
+                if detected_items:
+                    st.markdown("""
+                        <div class='success-box'>
+                            <h3 style='margin: 0; color: #1E3A8A;'>✅ Objects Detected</h3>
+                            <p style='margin: 0.5rem 0 0 0;'>{}</p>
+                        </div>
+                    """.format(', '.join([f'<strong>{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
+                    
+                    # Find matching items in our database
+                    estimates = []
+                    total_cost = 0
+                    
+                    for item_name, quantity in detected_items.items():
+                        # Find the item in our database (case insensitive)
+                        matching_items = [item for item in construction_items 
+                                        if item["object"].lower() == item_name.lower()]
+                        
+                        if matching_items:
+                            item = matching_items[0]
+                            cost = item['unit_cost'] * quantity
+                            total_cost += cost
+                            estimates.append({
+                                "object": item['object'], 
+                                "qty": quantity, 
+                                "cost": cost, 
+                                "link": item['supplier']
+                            })
+                    
+                    if estimates:
+                        st.markdown("<h3 style='text-align: center; margin-top: 2rem; color: #1E3A8A;'>📊 Cost Estimation Results</h3>", unsafe_allow_html=True)
+                        
+                        for e in estimates:
+                            st.markdown(f"""
+                                <div class='item-box'>
+                                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                        <div>
+                                            <span class='item-title'>{e['object']}</span><br>
+                                            <span class='item-details'>Quantity: {e['qty']} | Cost: ${e['cost']}</span>
+                                        </div>
+                                        <a href='{e['link']}' target='_blank' style='text-decoration: none;'>
+                                            <button class='buy-button'>Buy Now</button>
+                                        </a>
+                                    </div>
                                 </div>
-                                <a href='{e['link']}' target='_blank' style='text-decoration: none;'>
-                                    <button class='buy-button'>Buy Now</button>
-                                </a>
+                            """, unsafe_allow_html=True)
+
+                        st.markdown(f"""
+                            <div class='cost-box'>
+                                <h2 style='margin: 0; color: #1E3A8A;'>💰 Total Estimated Cost</h2>
+                                <h1 style='margin: 0.5rem 0; color: #1E40AF;'>${total_cost}</h1>
                             </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                            <div class='warning-box'>
+                                <h3 style='margin: 0; color: #2E4057;'>⚠️ No Matching Items</h3>
+                                <p style='margin: 0.5rem 0 0 0;'>No matching construction items found in our database.</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                        <div class='warning-box'>
+                            <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
+                            <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the image.</p>
                         </div>
                     """, unsafe_allow_html=True)
-
-                st.markdown(f"""
-                    <div class='cost-box'>
-                        <h2 style='margin: 0; color: #1E3A8A;'>💰 Total Estimated Cost</h2>
-                        <h1 style='margin: 0.5rem 0; color: #1E40AF;'>${total_cost}</h1>
-                    </div>
-                """, unsafe_allow_html=True)
             else:
                 st.markdown("""
                     <div class='warning-box'>
-                        <h3 style='margin: 0; color: #2E4057;'>⚠️ No Matching Items</h3>
-                        <p style='margin: 0.5rem 0 0 0;'>No matching construction items found in our database.</p>
+                        <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
+                        <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the image.</p>
                     </div>
                 """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-                <div class='warning-box'>
-                    <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
-                    <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the image.</p>
-                </div>
-            """, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # Footer
