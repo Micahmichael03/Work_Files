@@ -1,11 +1,9 @@
 import streamlit as st
-import random
-import time
 import cv2
+import numpy as np
+from PIL import Image
 import tempfile
 import os
-from PIL import Image
-import numpy as np
 from ultralytics import YOLO
 import supervision as sv
 
@@ -143,6 +141,8 @@ construction_items = [
     {"object": "Utility Knife", "unit_cost": 10, "supplier": "https://lowes.com/utility-knife"},
 ]
 
+
+
 def detect_objects(image):
     """Detect objects in image using YOLOv8 and return annotated image and detections"""
     if model is None:
@@ -213,7 +213,7 @@ def process_frame(frame):
     # Run YOLOv8 inference
     results = model(frame_rgb)
     
-    # Get detections if any exist  LOOK HERE
+    # Get detections if any exist
     if len(results[0].boxes) > 0:
         detections = sv.Detections(
             xyxy=results[0].boxes.xyxy.cpu().numpy(),
@@ -237,360 +237,298 @@ def process_frame(frame):
     
     return frame_rgb, []
 
-def run_live_camera_detection():
-    """Run live camera detection with YOLOv8"""
-    st.write("Live Camera Detection - Press 'Stop' to end")
+def run_live_camera_capture():
+    """Run live camera with capture functionality"""
+    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📷 Live Camera Capture</h2>", unsafe_allow_html=True)
     
-    # Create columns for buttons
-    col1, col2 = st.columns(2)
-    stop_button = col1.button("Stop Camera")
-    capture_button = col2.button("Capture & Analyze")
-    
-    # Create placeholder for analysis results
-    analysis_placeholder = st.empty()
-    
-    # Open camera
-    cap = cv2.VideoCapture(0)
-    
-    if not cap.isOpened():
-        st.error("Could not open camera")
-        return
-    
-    frame_window = st.image([])
-    captured_frame = None
-    
-    while not stop_button:
-        ret, frame = cap.read()
-        
-        if not ret:
-            st.error("Failed to capture frame")
-            break
-        
-        # Convert frame to RGB
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        if model:
-            # Run detection
-            results = model(frame)
-            
-            # Only process if we have detections
-            if len(results[0].boxes) > 0:
-                detections = sv.Detections(
-                    xyxy=results[0].boxes.xyxy.cpu().numpy(),
-                    confidence=results[0].boxes.conf.cpu().numpy(),
-                    class_id=results[0].boxes.cls.cpu().numpy().astype(int)
-                )
-                
-                # Filter for construction items
-                construction_item_names = [item["object"] for item in construction_items]
-                filtered_detections = []
-                
-                for i in range(len(detections)):
-                    class_name = model.model.names[detections.class_id[i]]
-                    if class_name in construction_item_names:
-                        filtered_detections.append((
-                            detections.xyxy[i],
-                            detections.confidence[i],
-                            detections.class_id[i]
-                        ))
-                
-                if filtered_detections:
-                    # Annotate frame
-                    labels = [
-                        f"{model.model.names[class_id]} {confidence:0.2f}"
-                        for _, confidence, class_id in filtered_detections
-                    ]
-                    
-                    annotated_frame = box_annotator.annotate(
-                        scene=frame.copy(),
-                        detections=sv.Detections(
-                            xyxy=np.array([d[0] for d in filtered_detections]),
-                            confidence=np.array([d[1] for d in filtered_detections]),
-                            class_id=np.array([d[2] for d in filtered_detections])
-                        ),
-                        labels=labels
-                    )
-                    frame_window.image(annotated_frame)
-                    captured_frame = annotated_frame
-                else:
-                    frame_window.image(frame)
-                    captured_frame = frame
-            else:
-                frame_window.image(frame)
-                captured_frame = frame
-        else:
-            frame_window.image(frame)
-            captured_frame = frame
-        
-        # Check if capture button was pressed
-        if capture_button and captured_frame is not None:
-            # Convert captured frame to PIL Image
-            captured_image = Image.fromarray(captured_frame)
-            
-            # Create a temporary file to save the captured image
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
-                captured_image.save(tmp_file.name)
-                
-                # Display the captured image and analysis in the placeholder
-                with analysis_placeholder.container():
-                    st.markdown("<h3 style='text-align: center; color: #1E3A8A;'>📸 Captured Image Analysis</h3>", unsafe_allow_html=True)
-                    st.image(captured_image, caption="Captured Image", use_container_width=True)
-                    
-                    # Analyze the captured image
-                    with st.spinner("🔍 Analyzing captured image..."):
-                        # Get detected items
-                        detected_items = {}
-                        for _, confidence, class_id in filtered_detections:
-                            class_name = model.model.names[class_id]
-                            detected_items[class_name] = detected_items.get(class_name, 0) + 1
-                        
-                        if detected_items:
-                            st.markdown("""
-                                <div class='success-box'>
-                                    <h3 style='margin: 0; color: #1E3A8A;'>✅ Objects Detected</h3>
-                                    <p style='margin: 0.5rem 0 0 0;'>{}</p>
-                                </div>
-                            """.format(', '.join([f'<strong>{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
-                            
-                            # Find matching items in our database
-                            estimates = []
-                            total_cost = 0
-                            
-                            for item_name, quantity in detected_items.items():
-                                # Find the item in our database (case insensitive)
-                                matching_items = [item for item in construction_items 
-                                                if item["object"].lower() == item_name.lower()]
-                                
-                                if matching_items:
-                                    item = matching_items[0]
-                                    cost = item['unit_cost'] * quantity
-                                    total_cost += cost
-                                    estimates.append({
-                                        "object": item['object'], 
-                                        "qty": quantity, 
-                                        "cost": cost, 
-                                        "link": item['supplier']
-                                    })
-                            
-                            if estimates:
-                                st.markdown("<h3 style='text-align: center; margin-top: 2rem; color: #1E3A8A;'>📊 Cost Estimation Results</h3>", unsafe_allow_html=True)
-                                
-                                for e in estimates:
-                                    st.markdown(f"""
-                                        <div class='item-box'>
-                                            <div style='display: flex; justify-content: space-between; align-items: center;'>
-                                                <div>
-                                                    <span class='item-title'>{e['object']}</span><br>
-                                                    <span class='item-details'>Quantity: {e['qty']} | Cost: ${e['cost']}</span>
-                                                </div>
-                                                <a href='{e['link']}' target='_blank' style='text-decoration: none;'>
-                                                    <button class='buy-button'>Buy Now</button>
-                                                </a>
-                                            </div>
-                                        </div>
-                                    """, unsafe_allow_html=True)
+    # Initialize session state for camera
+    if 'camera_on' not in st.session_state:
+        st.session_state.camera_on = False
+    if 'captured_image' not in st.session_state:
+        st.session_state.captured_image = None
 
+    # Camera controls
+    st.markdown("""
+        <style>
+        /* Camera Control Buttons */
+        div[data-testid="stButton"] button {
+            background-color: #1E3A8A;
+            color: white;
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        div[data-testid="stButton"] button:hover {
+            background-color: #1E40AF;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        div[data-testid="stButton"] button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        div[data-testid="stButton"] button.capture {
+            background-color: #059669;
+            padding: 0.75rem 1.5rem;
+            margin-top: 1rem;
+        }
+        div[data-testid="stButton"] button.capture:hover {
+            background-color: #047857;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    start_button = col1.button("🎥 Start Camera")
+    stop_button = col2.button("⏹️ Stop Camera")
+    capture_button = st.button("📸 Capture Image", key="capture")
+
+    if start_button:
+        st.session_state.camera_on = True
+        st.session_state.captured_image = None
+
+    if stop_button:
+        st.session_state.camera_on = False
+        st.session_state.captured_image = None
+
+    # Camera feed and capture
+    if st.session_state.camera_on:
+        camera_placeholder = st.empty()
+        cap = cv2.VideoCapture(0)
+        
+        while st.session_state.camera_on:
+            ret, frame = cap.read()
+            if not ret:
+                st.error("Failed to capture frame")
+                break
+            
+            # Display the live camera feed
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            camera_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+            
+            # Handle capture
+            if capture_button:
+                st.session_state.captured_image = frame_rgb
+                cap.release()
+                st.session_state.camera_on = False
+                st.rerun()
+                break
+
+    # Show captured image and analysis
+    if st.session_state.captured_image is not None:
+        st.markdown("<div class='detection-results'>", unsafe_allow_html=True)
+        st.image(st.session_state.captured_image, caption="Captured Image", use_container_width=True)
+        
+        # Process button
+        if st.button("🔍 Analyze Captured Image"):
+            with st.spinner("Processing image..."):
+                # Process image
+                annotated_image, detections = process_frame(cv2.cvtColor(st.session_state.captured_image, cv2.COLOR_RGB2BGR))
+                
+                # Show detection results
+                st.image(annotated_image, caption="Detected Objects", use_container_width=True)
+                
+                # Get detected items
+                detected_items = {}
+                if len(detections) > 0:
+                    for i in range(len(detections)):
+                        class_id = detections.class_id[i]
+                        class_name = model.model.names[class_id]
+                        detected_items[class_name] = detected_items.get(class_name, 0) + 1
+                    
+                    if detected_items:
+                        st.markdown("""
+                            <div class='success-box'>
+                                <h3 style='margin: 0; color: #1E3A8A;'>✅ Objects Detected</h3>
+                                <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>{}</p>
+                            </div>
+                        """.format(', '.join([f'<strong style="color: #1E3A8A;">{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
+                        
+                        # Find matching items in our database
+                        estimates = []
+                        total_cost = 0
+                        
+                        for item_name, quantity in detected_items.items():
+                            # Find the item in our database (case insensitive)
+                            matching_items = [item for item in construction_items 
+                                            if item["object"].lower() == item_name.lower()]
+                            
+                            if matching_items:
+                                item = matching_items[0]
+                                cost = item['unit_cost'] * quantity
+                                total_cost += cost
+                                estimates.append({
+                                    "object": item['object'], 
+                                    "qty": quantity, 
+                                    "cost": cost, 
+                                    "link": item['supplier']
+                                })
+                        
+                        if estimates:
+                            st.markdown("<h3 style='text-align: center; margin-top: 2rem; color: #1E3A8A;'>📊 Cost Estimation Results</h3>", unsafe_allow_html=True)
+                            
+                            for e in estimates:
                                 st.markdown(f"""
-                                    <div class='cost-box'>
-                                        <h2 style='margin: 0; color: #1E3A8A;'>💰 Total Estimated Cost</h2>
-                                        <h1 style='margin: 0.5rem 0; color: #1E40AF;'>${total_cost}</h1>
+                                    <div class='item-box'>
+                                        <div style='display: flex; justify-content: space-between; align-items: center;'>
+                                            <div>
+                                                <span class='item-title'>{e['object']}</span><br>
+                                                <span class='item-details'>Quantity: {e['qty']} | Cost: ${e['cost']}</span>
+                                            </div>
+                                            <a href='{e['link']}' target='_blank' style='text-decoration: none;'>
+                                                <button class='buy-button'>Buy Now</button>
+                                            </a>
+                                        </div>
                                     </div>
                                 """, unsafe_allow_html=True)
+
+                            st.markdown(f"""
+                                <div class='cost-box'>
+                                    <h2 style='margin: 0; color: #1E3A8A;'>💰 Total Estimated Cost</h2>
+                                    <h1 style='margin: 0.5rem 0; color: #1E40AF;'>${total_cost}</h1>
+                                </div>
+                            """, unsafe_allow_html=True)
                         else:
                             st.markdown("""
                                 <div class='warning-box'>
-                                    <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
-                                    <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the captured image.</p>
+                                    <h3 style='margin: 0; color: #2E4057;'>⚠️ No Matching Items</h3>
+                                    <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No matching construction items found in our database.</p>
                                 </div>
                             """, unsafe_allow_html=True)
-                
-                # Clean up the temporary file
-                os.unlink(tmp_file.name)
-        
-        # Check if stop button was pressed
-        if stop_button:
-            break
-    
-    cap.release()
+                    else:
+                        st.markdown("""
+                            <div class='warning-box'>
+                                <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
+                                <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No construction items detected in the image.</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                        <div class='warning-box'>
+                            <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
+                            <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No construction items detected in the image.</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # Add custom CSS
 st.markdown("""
     <style>
-    .main {
-        padding: 2rem;
-        color: #333333;
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-    .stTitle {
-        color: #1E3A8A;
-        font-size: 3rem !important;
-        font-weight: 700 !important;
-        text-align: center;
-        margin-bottom: 2rem !important;
-    }
-    .stSubheader {
-        color: #1E3A8A;
-        font-size: 1.5rem !important;
-        font-weight: 600 !important;
-        margin-top: 2rem !important;
-    }
-    .stButton>button {
+    /* Camera Control Buttons */
+    div[data-testid="stButton"] button {
         background-color: #1E3A8A;
-        color: #FFFFFF;
-        font-weight: 600;
-        padding: 0.5rem 2rem;
-        border-radius: 15px;
+        color: white;
+        padding: 0.5rem 1rem;
         border: none;
-        width: 100%;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        transition: all 0.3s ease;
-    }
-    .stButton>button:hover {
-        background-color: #1E40AF;
-        color: #FFFFFF;
-        transform: translateY(-2px);
-        box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
-    }
-    .success-box {
-        background-color: #ECFDF5;
-        padding: 1.5rem;
-        border-radius: 20px;
-        border-left: 5px solid #059669;
-        margin: 1.5rem auto;
-        color: #065F46;
-        box-shadow: 0 4px 15px rgba(5, 150, 105, 0.1);
-        max-width: 800px;
-        transition: all 0.3s ease;
-    }
-    .success-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(5, 150, 105, 0.15);
-    }
-    .warning-box {
-        background-color: #FFFBEB;
-        padding: 1.5rem;
-        border-radius: 20px;
-        border-left: 5px solid #D97706;
-        margin: 1.5rem auto;
-        color: #92400E;
-        box-shadow: 0 4px 15px rgba(217, 119, 6, 0.1);
-        max-width: 800px;
-        transition: all 0.3s ease;
-    }
-    .warning-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(217, 119, 6, 0.15);
-    }
-    .cost-box {
-        background-color: #EFF6FF;
-        padding: 2rem;
-        border-radius: 25px;
-        margin: 2rem auto;
-        text-align: center;
-        color: #1E40AF;
-        box-shadow: 0 4px 20px rgba(30, 64, 175, 0.1);
-        max-width: 600px;
-        transition: all 0.3s ease;
-    }
-    .cost-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 25px rgba(30, 64, 175, 0.15);
-    }
-    .item-box {
-        background-color: #FFFFFF;
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin: 1rem auto;
-        color: #1E293B;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-        max-width: 800px;
-        border: 1px solid #E2E8F0;
-        transition: all 0.3s ease;
-    }
-    .item-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-    }
-    .camera-box {
-        background-color: #FFFFFF;
-        padding: 2rem;
-        border-radius: 20px;
-        margin: 2rem auto;
-        text-align: center;
-        color: #1E293B;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        max-width: 800px;
-        border: 1px solid #E2E8F0;
-        transition: all 0.3s ease;
-    }
-    .camera-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 25px rgba(0, 0, 0, 0.1);
-    }
-    .upload-box {
-        background-color: #FFFFFF;
-        padding: 2rem;
-        border-radius: 20px;
-        margin: 2rem auto;
-        text-align: center;
-        color: #1E293B;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        max-width: 800px;
-        border: 1px solid #E2E8F0;
-        transition: all 0.3s ease;
-    }
-    .upload-box:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 25px rgba(0, 0, 0, 0.1);
-    }
-    .footer-text {
-        color: #64748B;
-        text-align: center;
-        margin: 2rem auto;
-        max-width: 800px;
-    }
-    .item-title {
-        color: #1E3A8A;
+        border-radius: 5px;
         font-weight: 600;
-        font-size: 1.1rem;
-    }
-    .item-details {
-        color: #475569;
-        font-size: 0.95rem;
-    }
-    .buy-button {
-        background-color: #1E3A8A;
-        color: #FFFFFF;
-        border: none;
-        padding: 0.6rem 1.2rem;
-        border-radius: 12px;
         cursor: pointer;
-        text-decoration: none;
-        font-weight: 500;
-        box-shadow: 0 4px 6px rgba(30, 58, 138, 0.1);
+        transition: all 0.3s ease;
+        width: 100%;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    div[data-testid="stButton"] button:hover {
+        background-color: #1E40AF;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    div[data-testid="stButton"] button:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    div[data-testid="stButton"] button.capture {
+        background-color: #059669;
+        padding: 0.75rem 1.5rem;
+        margin-top: 1rem;
+    }
+    div[data-testid="stButton"] button.capture:hover {
+        background-color: #047857;
+    }
+    
+    /* Object Detection Display Styles */
+    .success-box {
+        background-color: #F0FDF4;
+        border: 1px solid #86EFAC;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .success-box p {
+        color: #1E293B;
+        font-size: 1rem;
+        margin: 0.5rem 0 0 0;
+    }
+    
+    .success-box strong {
+        color: #1E3A8A;
+    }
+    
+    .warning-box {
+        background-color: #FEF2F2;
+        border: 1px solid #FCA5A5;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .warning-box p {
+        color: #1E293B;
+        font-size: 1rem;
+        margin: 0.5rem 0 0 0;
+    }
+    
+    .item-box {
+        background-color: white;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .item-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #1E3A8A;
+    }
+    
+    .item-details {
+        color: #6B7280;
+        font-size: 0.9rem;
+    }
+    
+    .buy-button {
+        background-color: #059669;
+        color: white;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 5px;
+        font-weight: 600;
+        cursor: pointer;
         transition: all 0.3s ease;
     }
+    
     .buy-button:hover {
-        background-color: #1E40AF;
-        color: #FFFFFF;
+        background-color: #047857;
         transform: translateY(-2px);
-        box-shadow: 0 6px 8px rgba(30, 58, 138, 0.2);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    .detection-results {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 1rem;
-    }
-    .upload-section {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 1rem;
-    }
-    .camera-section {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 1rem;
+    
+    .cost-box {
+        background-color: #F8FAFC;
+        border: 2px solid #1E3A8A;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 2rem 0;
+        text-align: center;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -602,31 +540,19 @@ st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>🏗️ Constructio
 st.markdown("""
     <div style='text-align: center; margin-bottom: 2rem; max-width: 800px; margin: 0 auto 2rem auto;'>
         <p style='font-size: 1.2rem; color: #475569;'>
-            Upload an image or use live camera to detect construction objects and get instant cost estimates.
+            Use live camera or upload images to detect construction objects and get cost estimates.
         </p>
     </div>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Live camera option
-st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📷 Live Camera Detection</h2>", unsafe_allow_html=True)
-st.markdown("""
-    <div class='camera-section'>
-        <div class='camera-box'>
-            <p style='text-align: center; margin-bottom: 1rem; font-size: 1.1rem;'>
-                Click the button below to start real-time object detection using your camera.
-            </p>
-        </div>
-    </div>
-""", unsafe_allow_html=True)
-
-if st.button("🎥 Start Live Camera", key="live_camera"):
-    run_live_camera_detection()
+# Live camera capture option
+run_live_camera_capture()
 
 st.markdown("---")
 
-# Image upload option (unchanged) LOOK HERE
+# Original upload option (unchanged)
 st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📤 Upload Image</h2>", unsafe_allow_html=True)
 st.markdown("""
     <div class='upload-section'>
@@ -672,9 +598,9 @@ if uploaded_file is not None:
                     st.markdown("""
                         <div class='success-box'>
                             <h3 style='margin: 0; color: #1E3A8A;'>✅ Objects Detected</h3>
-                            <p style='margin: 0.5rem 0 0 0;'>{}</p>
+                            <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>{}</p>
                         </div>
-                    """.format(', '.join([f'<strong>{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
+                    """.format(', '.join([f'<strong style="color: #1E3A8A;">{k}</strong> ({v})' for k, v in detected_items.items()])), unsafe_allow_html=True)
                     
                     # Find matching items in our database
                     estimates = []
@@ -724,24 +650,24 @@ if uploaded_file is not None:
                         st.markdown("""
                             <div class='warning-box'>
                                 <h3 style='margin: 0; color: #2E4057;'>⚠️ No Matching Items</h3>
-                                <p style='margin: 0.5rem 0 0 0;'>No matching construction items found in our database.</p>
+                                <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No matching construction items found in our database.</p>
                             </div>
                         """, unsafe_allow_html=True)
                 else:
                     st.markdown("""
                         <div class='warning-box'>
                             <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
-                            <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the image.</p>
+                            <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No construction items detected in the image.</p>
                         </div>
                     """, unsafe_allow_html=True)
             else:
                 st.markdown("""
                     <div class='warning-box'>
                         <h3 style='margin: 0; color: #2E4057;'>⚠️ No Objects Detected</h3>
-                        <p style='margin: 0.5rem 0 0 0;'>No construction items detected in the image.</p>
+                        <p style='margin: 0.5rem 0 0 0; color: #1E293B;'>No construction items detected in the image.</p>
                     </div>
                 """, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # Footer
 st.markdown("""
