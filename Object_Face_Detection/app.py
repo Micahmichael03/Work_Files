@@ -141,8 +141,6 @@ construction_items = [
     {"object": "Utility Knife", "unit_cost": 10, "supplier": "https://lowes.com/utility-knife"},
 ]
 
-
-
 def detect_objects(image):
     """Detect objects in image using YOLOv8 and return annotated image and detections"""
     if model is None:
