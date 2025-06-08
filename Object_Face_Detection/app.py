@@ -300,7 +300,7 @@ def run_live_camera_detection():
                 # Display the captured image and analysis in the placeholder
                 with analysis_placeholder.container():
                     st.markdown("<h3 style='text-align: center; color: #1E3A8A;'>📸 Captured Image Analysis</h3>", unsafe_allow_html=True)
-                    st.image(captured_image, caption="Captured Image", use_column_width=True)
+                    st.image(captured_image, caption="Captured Image", use_container_width=True)
                     
                     # Analyze the captured image
                     with st.spinner("🔍 Analyzing captured image..."):
@@ -609,14 +609,14 @@ camera_input = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"
 if camera_input:
     st.markdown("<div class='detection-results'>", unsafe_allow_html=True)
     image = Image.open(camera_input)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
     with st.spinner("🔍 Detecting objects and estimating costs..."):
         # Run object detection
         annotated_image, detected_items = detect_objects(image)
         
         # Show detection results
-        st.image(annotated_image, caption="Detected Objects", use_column_width=True)
+        st.image(annotated_image, caption="Detected Objects", use_container_width=True)
         
         if detected_items:
             st.markdown("""
